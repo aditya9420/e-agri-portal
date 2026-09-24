@@ -76,6 +76,26 @@ app.post('/api/auth/register', async (req, res) => {
     }
 });
 
+// Temporary endpoint to seed the admin account on cloud databases
+app.get('/api/seed-admin', async (req, res) => {
+    try {
+        const hashedPassword = await bcrypt.hash('admin123', 10);
+        db.get(`SELECT id FROM Admins WHERE email = $1`, ['admin@eagri.gov'], (err, row) => {
+            if (row) return res.json({ message: 'Admin already seeded' });
+            
+            db.run(`INSERT INTO Admins (name, email, hashed_password) VALUES ($1, $2, $3)`,
+                ['Admin', 'admin@eagri.gov', hashedPassword],
+                function(err) {
+                    if (err) return res.status(500).json({ error: err.message });
+                    res.json({ message: 'Admin seeded successfully!', success: true });
+                }
+            );
+        });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
 app.post('/api/auth/login', (req, res) => {
     const { email, password, role } = req.body;
     const table = role === 'admin' ? 'Admins' : 'Farmers';

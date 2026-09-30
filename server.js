@@ -292,7 +292,7 @@ app.get('/api/stats', authenticate, requireAdmin, (req, res) => {
 });
 
 
-// --- Kisan AI Assistant ---
+// --- Kisan Mitra Assistant ---
 app.post('/api/ai/chat', authenticate, async (req, res) => {
     const { message, language } = req.body;
     if (!message) return res.status(400).json({ error: 'Message is required' });
@@ -303,14 +303,14 @@ app.post('/api/ai/chat', authenticate, async (req, res) => {
         
         const ai = new GoogleGenAI({ apiKey });
         const langInstruction = language === 'mr' ? 'Respond strictly in Marathi (मराठी) directly addressing the farmer.' : 'Respond in English directly addressing the farmer.';
-        const prompt = `You are 'Kisan AI', an expert and friendly agricultural assistant. 
+        const prompt = `You are 'Kisan Mitra', an expert and friendly agricultural assistant. 
 Farmer says: "${message}"
 ${langInstruction}
 Keep the response concise, practical, and highly relevant to farming in India.`;
         
         const response = await ai.models.generateContent({
             model: 'gemini-2.5-flash',
-            contents: [prompt]
+            contents: prompt
         });
         
         let text = "";

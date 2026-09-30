@@ -196,7 +196,11 @@ app.post('/api/ai/analyze', authenticate, requireFarmer, upload.single('photo'),
         const base64Image = Buffer.from(fileBytes).toString('base64');
         const mimeType = req.file.mimetype;
 
+                const lang = req.body.language || 'en';
+        const langInstruction = lang === 'mr' ? 'Respond ENTIRELY in Marathi (Marathi), including the disease name and measures, but keep the JSON keys exactly as specified in English.' : 'Respond ENTIRELY in English.';
+
         const prompt = `You are an expert plant pathologist. Analyze this plant image. Identify the crop and any disease present.
+${langInstruction}
 Provide your response STRICTLY as a raw JSON object without any markdown formatting (no \`\`\`json blocks). Match this exact schema:
 {
   "disease": "Name of the disease (or 'Healthy Plant' if none)",
@@ -291,3 +295,4 @@ const PORT = 3000;
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`Backend running on port ${PORT}`);
 });
+

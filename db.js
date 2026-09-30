@@ -50,6 +50,16 @@ const init = async () => {
                 price_per_unit REAL NOT NULL,
                 updated_at TEXT NOT NULL
             );
+                        CREATE TABLE IF NOT EXISTS Marketplace (
+                id SERIAL PRIMARY KEY,
+                farmer_id INTEGER NOT NULL REFERENCES Farmers(id) ON DELETE CASCADE,
+                title TEXT NOT NULL,
+                description TEXT NOT NULL,
+                price REAL NOT NULL,
+                contact TEXT NOT NULL,
+                type TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS GovtSchemes (
                 id SERIAL PRIMARY KEY,
                 scheme_name TEXT NOT NULL,

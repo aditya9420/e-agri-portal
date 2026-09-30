@@ -291,6 +291,65 @@ app.get('/api/stats', authenticate, requireAdmin, (req, res) => {
     });
 });
 
+
+// --- Kisan AI Assistant ---
+app.post('/api/ai/chat', authenticate, async (req, res) => {
+    const { message, language } = req.body;
+    if (!message) return res.status(400).json({ error: 'Message is required' });
+    
+    try {
+        const apiKey = process.env.GEMINI_API_KEY;
+        if (!apiKey) return res.status(500).json({ error: 'Missing API Key' });
+        
+        const ai = new GoogleGenAI({ apiKey });
+        const langInstruction = language === 'mr' ? 'Respond strictly in Marathi (मराठी) directly addressing the farmer.' : 'Respond in English directly addressing the farmer.';
+        const prompt = `You are 'Kisan AI', an expert and friendly agricultural assistant. 
+Farmer says: "${message}"
+${langInstruction}
+Keep the response concise, practical, and highly relevant to farming in India.`;
+        
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: [prompt]
+        });
+        
+        let text = "";
+        if (response && response.candidates && response.candidates.length > 0) {
+            const content = response.candidates[0].content;
+            if (content && content.parts && content.parts.length > 0) {
+                text = content.parts[0].text;
+            }
+        }
+        res.json({ reply: text || response.text || 'Unable to generate response.' });
+    } catch (e) {
+        console.error(e);
+        res.status(500).json({ error: 'Failed to chat with AI' });
+    }
+});
+
+// --- Marketplace ---
+app.get('/api/marketplace', authenticate, (req, res) => {
+    db.all(`
+        SELECT m.*, f.name as farmer_name 
+        FROM Marketplace m 
+        JOIN Farmers f ON m.farmer_id = f.id 
+        ORDER BY m.id DESC
+    `, [], (err, rows) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json(rows);
+    });
+});
+
+app.post('/api/marketplace', authenticate, requireFarmer, (req, res) => {
+    const { title, description, price, contact, type } = req.body;
+    db.run(`INSERT INTO Marketplace (farmer_id, title, description, price, contact, type, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [req.user.id, title, description, price, contact, type, new Date().toISOString()],
+        function(err) {
+            if (err) return res.status(500).json({ error: err.message });
+            res.json({ id: this.lastID, success: true });
+        });
+});
+
 const PORT = 3000;
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`Backend running on port ${PORT}`);

@@ -354,8 +354,6 @@ app.post('/api/marketplace', authenticate, requireFarmer, upload.single('photo')
             res.json({ id: this.lastID, success: true });
         });
 });
-        });
-});
 
 const PORT = 3000;
 app.listen(PORT, '0.0.0.0', () => {

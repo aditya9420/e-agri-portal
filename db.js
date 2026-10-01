@@ -69,7 +69,12 @@ const init = async () => {
                 created_at TEXT NOT NULL
             );
         `);
-        console.log('✅ Connected to PostgreSQL Database.');
+        
+        try { await client.query("ALTER TABLE Marketplace ADD COLUMN image_url TEXT;"); } catch(e) {}
+        try { await client.query("ALTER TABLE Marketplace ADD COLUMN category TEXT;"); } catch(e) {}
+        try { await client.query("ALTER TABLE Marketplace ADD COLUMN location TEXT;"); } catch(e) {}
+
+        console.log("Connected to PostgreSQL Database.");
         client.release();
     } catch (err) {
         console.error('❌ Database connection failed. Did you set DATABASE_URL in .env?', err.message);

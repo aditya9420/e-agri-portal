@@ -340,13 +340,20 @@ app.get('/api/marketplace', authenticate, (req, res) => {
     });
 });
 
-app.post('/api/marketplace', authenticate, requireFarmer, (req, res) => {
-    const { title, description, price, contact, type } = req.body;
-    db.run(`INSERT INTO Marketplace (farmer_id, title, description, price, contact, type, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [req.user.id, title, description, price, contact, type, new Date().toISOString()],
+app.post('/api/marketplace', authenticate, requireFarmer, upload.single('photo'), (req, res) => {
+    const { title, description, price, contact, type, category, location } = req.body;
+    let imageUrl = null;
+    if (req.file) {
+        imageUrl = '/uploads/' + req.file.filename;
+    }
+    
+    db.run(`INSERT INTO Marketplace (farmer_id, title, description, price, contact, type, category, location, image_url, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [req.user.id, title, description, price, contact, type, category || 'Other', location || 'Not Specified', imageUrl, new Date().toISOString()],
         function(err) {
             if (err) return res.status(500).json({ error: err.message });
             res.json({ id: this.lastID, success: true });
+        });
+});
         });
 });
 

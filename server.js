@@ -355,6 +355,54 @@ app.post('/api/marketplace', authenticate, requireFarmer, upload.single('photo')
         });
 });
 
+
+// --- Community Forum (Krishi Choupal) ---
+app.get('/api/forum', authenticate, (req, res) => {
+    db.all(`
+        SELECT p.*, f.name as farmer_name, 
+        (SELECT COUNT(*) FROM ForumComments c WHERE c.post_id = p.id) as comment_count
+        FROM ForumPosts p
+        JOIN Farmers f ON p.farmer_id = f.id
+        ORDER BY p.id DESC
+    `, [], (err, rows) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json(rows);
+    });
+});
+
+app.get('/api/forum/:id/comments', authenticate, (req, res) => {
+    db.all(`
+        SELECT c.*, f.name as farmer_name
+        FROM ForumComments c
+        JOIN Farmers f ON c.farmer_id = f.id
+        WHERE c.post_id = ?
+        ORDER BY c.id ASC
+    `, [req.params.id], (err, rows) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json(rows);
+    });
+});
+
+app.post('/api/forum', authenticate, requireFarmer, (req, res) => {
+    const { title, content } = req.body;
+    db.run(`INSERT INTO ForumPosts (farmer_id, title, content, created_at) VALUES (?, ?, ?, ?)`,
+        [req.user.id, title, content, new Date().toISOString()],
+        function(err) {
+            if (err) return res.status(500).json({ error: err.message });
+            res.json({ id: this.lastID, success: true });
+        });
+});
+
+app.post('/api/forum/:id/comment', authenticate, requireFarmer, (req, res) => {
+    const { comment } = req.body;
+    db.run(`INSERT INTO ForumComments (post_id, farmer_id, comment, created_at) VALUES (?, ?, ?, ?)`,
+        [req.params.id, req.user.id, comment, new Date().toISOString()],
+        function(err) {
+            if (err) return res.status(500).json({ error: err.message });
+            res.json({ id: this.lastID, success: true });
+        });
+});
+
 const PORT = 3000;
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`Backend running on port ${PORT}`);

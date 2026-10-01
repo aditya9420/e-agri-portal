@@ -68,7 +68,22 @@ const init = async () => {
                 application_link TEXT,
                 created_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS ForumPosts (
+                id SERIAL PRIMARY KEY,
+                farmer_id INTEGER NOT NULL REFERENCES Farmers(id) ON DELETE CASCADE,
+                title TEXT NOT NULL,
+                content TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS ForumComments (
+                id SERIAL PRIMARY KEY,
+                post_id INTEGER NOT NULL REFERENCES ForumPosts(id) ON DELETE CASCADE,
+                farmer_id INTEGER NOT NULL REFERENCES Farmers(id) ON DELETE CASCADE,
+                comment TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
         `);
+
         
         try { await client.query("ALTER TABLE Marketplace ADD COLUMN image_url TEXT;"); } catch(e) {}
         try { await client.query("ALTER TABLE Marketplace ADD COLUMN category TEXT;"); } catch(e) {}

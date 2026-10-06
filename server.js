@@ -340,6 +340,23 @@ app.get('/api/marketplace', authenticate, (req, res) => {
     });
 });
 
+
+app.delete('/api/marketplace/:id', authenticate, (req, res) => {
+    const listingId = req.params.id;
+    if (req.user.role === 'admin') {
+        db.run('DELETE FROM Marketplace WHERE id = ?', [listingId], function(err) {
+            if (err) return res.status(500).json({ error: err.message });
+            res.json({ success: true });
+        });
+    } else {
+        db.run('DELETE FROM Marketplace WHERE id = ? AND farmer_id = ?', [listingId, req.user.id], function(err) {
+            if (err) return res.status(500).json({ error: err.message });
+            if (this.changes === 0) return res.status(403).json({ error: 'Unauthorized or listing not found' });
+            res.json({ success: true });
+        });
+    }
+});
+
 app.post('/api/marketplace', authenticate, requireFarmer, upload.single('photo'), (req, res) => {
     const { title, description, price, contact, type, category, location } = req.body;
     let imageUrl = null;

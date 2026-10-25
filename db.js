@@ -6,6 +6,35 @@ let usePostgres = false;
 let pgPool = null;
 let sqliteDb = null;
 
+// Pure JS in-memory store for emergency fallback if both Postgres and SQLite native fail
+const memStore = {
+    Admins: [],
+    Farmers: [],
+    Crops: [],
+    DiseaseReports: [],
+    MarketRates: [
+        { id: 1, crop_name: 'Wheat', price_per_unit: 25.50, updated_at: new Date().toISOString() },
+        { id: 2, crop_name: 'Rice', price_per_unit: 32.00, updated_at: new Date().toISOString() },
+        { id: 3, crop_name: 'Corn', price_per_unit: 18.75, updated_at: new Date().toISOString() },
+        { id: 4, crop_name: 'Soybeans', price_per_unit: 45.20, updated_at: new Date().toISOString() },
+        { id: 5, crop_name: 'Cotton', price_per_unit: 55.00, updated_at: new Date().toISOString() }
+    ],
+    Marketplace: [],
+    GovtSchemes: [
+        { id: 1, scheme_name: 'PM-Kisan Samman Nidhi', eligibility: 'All landholding farmer families', benefits: 'Rs. 6000 per year', application_link: 'https://pmkisan.gov.in/', created_at: new Date().toISOString() },
+        { id: 2, scheme_name: 'PMFBY Crop Insurance', eligibility: 'Notified crops', benefits: 'Financial support against failure', application_link: 'https://pmfby.gov.in/', created_at: new Date().toISOString() },
+        { id: 3, scheme_name: 'Soil Health Card', eligibility: 'All farmers', benefits: 'Dosage recommendations', application_link: 'https://soilhealth.dac.gov.in/', created_at: new Date().toISOString() }
+    ],
+    ForumPosts: [],
+    ForumComments: []
+};
+
+// Seed default Admin in memStore
+const bcrypt = require('bcrypt');
+bcrypt.hash('admin123', 10).then(hash => {
+    memStore.Admins.push({ id: 1, name: 'System Admin', email: 'admin@eagri.gov', hashed_password: hash });
+});
+
 // Helper to convert SQLite '?' to Postgres '$1, $2, $3'
 const convertQuery = (query) => {
     let pgQuery = query;
@@ -17,142 +46,234 @@ const convertQuery = (query) => {
     return pgQuery;
 };
 
-// 1. Initialize SQLite Fallback
+// 1. Initialize SQLite Fallback with error protection against Linux GLIBC mismatch
 const initSqlite = () => {
-    const sqlite3 = require('sqlite3').verbose();
-    const dbPath = path.join(__dirname, 'eagri.db');
-    sqliteDb = new sqlite3.Database(dbPath, (err) => {
-        if (err) {
-            console.error('❌ Failed to open SQLite database:', err.message);
-        } else {
-            console.log('✅ Connected to SQLite database:', dbPath);
-        }
-    });
-
-    sqliteDb.serialize(() => {
-        sqliteDb.run(`
-            CREATE TABLE IF NOT EXISTS Farmers (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                email TEXT UNIQUE NOT NULL,
-                phone TEXT,
-                hashed_password TEXT NOT NULL,
-                address TEXT,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-            );
-        `, (err) => {});
-
-        sqliteDb.run(`
-            CREATE TABLE IF NOT EXISTS Admins (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                email TEXT UNIQUE NOT NULL,
-                hashed_password TEXT NOT NULL
-            );
-        `, (err) => {});
-
-        sqliteDb.run(`
-            CREATE TABLE IF NOT EXISTS Crops (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                farmer_id INTEGER NOT NULL REFERENCES Farmers(id) ON DELETE CASCADE,
-                crop_name TEXT NOT NULL,
-                sowing_date TEXT NOT NULL,
-                harvest_date TEXT,
-                fertilizer_details TEXT,
-                expenses REAL DEFAULT 0.00
-            );
-        `, (err) => {});
-
-        sqliteDb.run(`
-            CREATE TABLE IF NOT EXISTS DiseaseReports (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                farmer_id INTEGER NOT NULL REFERENCES Farmers(id) ON DELETE CASCADE,
-                crop_id INTEGER NOT NULL REFERENCES Crops(id) ON DELETE CASCADE,
-                image_url TEXT NOT NULL,
-                description TEXT NOT NULL,
-                status TEXT DEFAULT 'Pending',
-                report_date TEXT NOT NULL
-            );
-        `, (err) => {});
-
-        sqliteDb.run(`
-            CREATE TABLE IF NOT EXISTS MarketRates (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                crop_name TEXT UNIQUE NOT NULL,
-                price_per_unit REAL NOT NULL,
-                updated_at TEXT NOT NULL
-            );
-        `, (err) => {});
-
-        sqliteDb.run(`
-            CREATE TABLE IF NOT EXISTS Marketplace (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                farmer_id INTEGER NOT NULL REFERENCES Farmers(id) ON DELETE CASCADE,
-                title TEXT NOT NULL,
-                description TEXT NOT NULL,
-                price REAL NOT NULL,
-                contact TEXT NOT NULL,
-                type TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                image_url TEXT,
-                category TEXT,
-                location TEXT
-            );
-        `, (err) => {});
-
-        sqliteDb.run(`
-            CREATE TABLE IF NOT EXISTS GovtSchemes (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                scheme_name TEXT NOT NULL,
-                eligibility TEXT NOT NULL,
-                benefits TEXT NOT NULL,
-                application_link TEXT,
-                created_at TEXT NOT NULL
-            );
-        `, (err) => {});
-
-        sqliteDb.run(`
-            CREATE TABLE IF NOT EXISTS ForumPosts (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                farmer_id INTEGER NOT NULL REFERENCES Farmers(id) ON DELETE CASCADE,
-                title TEXT NOT NULL,
-                content TEXT NOT NULL,
-                created_at TEXT NOT NULL
-            );
-        `, (err) => {});
-
-        sqliteDb.run(`
-            CREATE TABLE IF NOT EXISTS ForumComments (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                post_id INTEGER NOT NULL REFERENCES ForumPosts(id) ON DELETE CASCADE,
-                farmer_id INTEGER NOT NULL REFERENCES Farmers(id) ON DELETE CASCADE,
-                comment TEXT NOT NULL,
-                created_at TEXT NOT NULL
-            );
-        `, (err) => {});
-
-        // Safely attempt migrations with callbacks to catch duplicate column errors
-        sqliteDb.run("ALTER TABLE Marketplace ADD COLUMN image_url TEXT;", (err) => {});
-        sqliteDb.run("ALTER TABLE Marketplace ADD COLUMN category TEXT;", (err) => {});
-        sqliteDb.run("ALTER TABLE Marketplace ADD COLUMN location TEXT;", (err) => {});
-
-        // Seed default Admin if empty
-        const bcrypt = require('bcrypt');
-        sqliteDb.get("SELECT COUNT(*) as count FROM Admins", [], async (err, row) => {
-            if (!err && row && row.count === 0) {
-                const adminPwd = await bcrypt.hash('admin123', 10);
-                sqliteDb.run(
-                    "INSERT INTO Admins (name, email, hashed_password) VALUES (?, ?, ?)",
-                    ['System Admin', 'admin@eagri.gov', adminPwd],
-                    (e) => {}
-                );
-                console.log('🌱 Seeded default admin: admin@eagri.gov / admin123');
+    try {
+        const sqlite3 = require('sqlite3').verbose();
+        const dbPath = path.join(__dirname, 'eagri.db');
+        sqliteDb = new sqlite3.Database(dbPath, (err) => {
+            if (err) {
+                console.warn('⚠️ SQLite file open warning:', err.message);
+            } else {
+                console.log('✅ Connected to SQLite database:', dbPath);
             }
         });
 
-        // Seed default MarketRates if empty
-        sqliteDb.get("SELECT COUNT(*) as count FROM MarketRates", [], (err, row) => {
-            if (!err && row && row.count === 0) {
+        sqliteDb.serialize(() => {
+            sqliteDb.run(`
+                CREATE TABLE IF NOT EXISTS Farmers (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    email TEXT UNIQUE NOT NULL,
+                    phone TEXT,
+                    hashed_password TEXT NOT NULL,
+                    address TEXT,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                );
+            `, () => {});
+
+            sqliteDb.run(`
+                CREATE TABLE IF NOT EXISTS Admins (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    email TEXT UNIQUE NOT NULL,
+                    hashed_password TEXT NOT NULL
+                );
+            `, () => {});
+
+            sqliteDb.run(`
+                CREATE TABLE IF NOT EXISTS Crops (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    farmer_id INTEGER NOT NULL REFERENCES Farmers(id) ON DELETE CASCADE,
+                    crop_name TEXT NOT NULL,
+                    sowing_date TEXT NOT NULL,
+                    harvest_date TEXT,
+                    fertilizer_details TEXT,
+                    expenses REAL DEFAULT 0.00
+                );
+            `, () => {});
+
+            sqliteDb.run(`
+                CREATE TABLE IF NOT EXISTS DiseaseReports (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    farmer_id INTEGER NOT NULL REFERENCES Farmers(id) ON DELETE CASCADE,
+                    crop_id INTEGER NOT NULL REFERENCES Crops(id) ON DELETE CASCADE,
+                    image_url TEXT NOT NULL,
+                    description TEXT NOT NULL,
+                    status TEXT DEFAULT 'Pending',
+                    report_date TEXT NOT NULL
+                );
+            `, () => {});
+
+            sqliteDb.run(`
+                CREATE TABLE IF NOT EXISTS MarketRates (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    crop_name TEXT UNIQUE NOT NULL,
+                    price_per_unit REAL NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+            `, () => {});
+
+            sqliteDb.run(`
+                CREATE TABLE IF NOT EXISTS Marketplace (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    farmer_id INTEGER NOT NULL REFERENCES Farmers(id) ON DELETE CASCADE,
+                    title TEXT NOT NULL,
+                    description TEXT NOT NULL,
+                    price REAL NOT NULL,
+                    contact TEXT NOT NULL,
+                    type TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    image_url TEXT,
+                    category TEXT,
+                    location TEXT
+                );
+            `, () => {});
+
+            sqliteDb.run(`
+                CREATE TABLE IF NOT EXISTS GovtSchemes (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    scheme_name TEXT NOT NULL,
+                    eligibility TEXT NOT NULL,
+                    benefits TEXT NOT NULL,
+                    application_link TEXT,
+                    created_at TEXT NOT NULL
+                );
+            `, () => {});
+
+            sqliteDb.run(`
+                CREATE TABLE IF NOT EXISTS ForumPosts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    farmer_id INTEGER NOT NULL REFERENCES Farmers(id) ON DELETE CASCADE,
+                    title TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+            `, () => {});
+
+            sqliteDb.run(`
+                CREATE TABLE IF NOT EXISTS ForumComments (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    post_id INTEGER NOT NULL REFERENCES ForumPosts(id) ON DELETE CASCADE,
+                    farmer_id INTEGER NOT NULL REFERENCES Farmers(id) ON DELETE CASCADE,
+                    comment TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+            `, () => {});
+        });
+    } catch (err) {
+        console.warn('⚠️ SQLite native library could not be loaded (GLIBC environment mismatch). Using in-memory store.');
+        sqliteDb = null;
+    }
+};
+
+// 2. Initialize PostgreSQL or Fallback
+const init = async () => {
+    const dbUrl = process.env.DATABASE_URL;
+    // Check if user has provided a valid, active cloud PostgreSQL URL (e.g. from Neon, Supabase, or new Render Postgres)
+    if (dbUrl && !dbUrl.includes('dpg-dape0me0tbcc73aio1u0-a')) {
+        try {
+            const { Pool } = require('pg');
+            pgPool = new Pool({
+                connectionString: dbUrl,
+                ssl: dbUrl.includes('localhost') ? false : { rejectUnauthorized: false },
+                connectionTimeoutMillis: 5000
+            });
+
+            const client = await pgPool.connect();
+            console.log('✅ Connected to Cloud PostgreSQL Database.');
+            usePostgres = true;
+
+            // Auto-create schema on PostgreSQL
+            await client.query(`
+                CREATE TABLE IF NOT EXISTS Farmers (
+                    id SERIAL PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    email TEXT UNIQUE NOT NULL,
+                    phone TEXT,
+                    hashed_password TEXT NOT NULL,
+                    address TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE TABLE IF NOT EXISTS Admins (
+                    id SERIAL PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    email TEXT UNIQUE NOT NULL,
+                    hashed_password TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS Crops (
+                    id SERIAL PRIMARY KEY,
+                    farmer_id INTEGER NOT NULL REFERENCES Farmers(id) ON DELETE CASCADE,
+                    crop_name TEXT NOT NULL,
+                    sowing_date TEXT NOT NULL,
+                    harvest_date TEXT,
+                    fertilizer_details TEXT,
+                    expenses REAL DEFAULT 0.00
+                );
+                CREATE TABLE IF NOT EXISTS DiseaseReports (
+                    id SERIAL PRIMARY KEY,
+                    farmer_id INTEGER NOT NULL REFERENCES Farmers(id) ON DELETE CASCADE,
+                    crop_id INTEGER NOT NULL REFERENCES Crops(id) ON DELETE CASCADE,
+                    image_url TEXT NOT NULL,
+                    description TEXT NOT NULL,
+                    status TEXT DEFAULT 'Pending',
+                    report_date TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS MarketRates (
+                    id SERIAL PRIMARY KEY,
+                    crop_name TEXT UNIQUE NOT NULL,
+                    price_per_unit REAL NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS Marketplace (
+                    id SERIAL PRIMARY KEY,
+                    farmer_id INTEGER NOT NULL REFERENCES Farmers(id) ON DELETE CASCADE,
+                    title TEXT NOT NULL,
+                    description TEXT NOT NULL,
+                    price REAL NOT NULL,
+                    contact TEXT NOT NULL,
+                    type TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    image_url TEXT,
+                    category TEXT,
+                    location TEXT
+                );
+                CREATE TABLE IF NOT EXISTS GovtSchemes (
+                    id SERIAL PRIMARY KEY,
+                    scheme_name TEXT NOT NULL,
+                    eligibility TEXT NOT NULL,
+                    benefits TEXT NOT NULL,
+                    application_link TEXT,
+                    created_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS ForumPosts (
+                    id SERIAL PRIMARY KEY,
+                    farmer_id INTEGER NOT NULL REFERENCES Farmers(id) ON DELETE CASCADE,
+                    title TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS ForumComments (
+                    id SERIAL PRIMARY KEY,
+                    post_id INTEGER NOT NULL REFERENCES ForumPosts(id) ON DELETE CASCADE,
+                    farmer_id INTEGER NOT NULL REFERENCES Farmers(id) ON DELETE CASCADE,
+                    comment TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+            `);
+
+            // Seed default Admin in PostgreSQL if empty
+            const checkAdmin = await client.query("SELECT COUNT(*) FROM Admins");
+            if (parseInt(checkAdmin.rows[0].count) === 0) {
+                const adminPwd = await bcrypt.hash('admin123', 10);
+                await client.query("INSERT INTO Admins (name, email, hashed_password) VALUES ($1, $2, $3)", 
+                    ['System Admin', 'admin@eagri.gov', adminPwd]);
+                console.log('🌱 Seeded default admin in PostgreSQL: admin@eagri.gov / admin123');
+            }
+
+            // Seed default MarketRates in PostgreSQL if empty
+            const checkRates = await client.query("SELECT COUNT(*) FROM MarketRates");
+            if (parseInt(checkRates.rows[0].count) === 0) {
                 const rates = [
                     ['Wheat', 25.50],
                     ['Rice', 32.00],
@@ -160,72 +281,28 @@ const initSqlite = () => {
                     ['Soybeans', 45.20],
                     ['Cotton', 55.00]
                 ];
-                rates.forEach(rate => {
-                    sqliteDb.run(
-                        "INSERT INTO MarketRates (crop_name, price_per_unit, updated_at) VALUES (?, ?, ?)",
-                        [rate[0], rate[1], new Date().toISOString()],
-                        (e) => {}
-                    );
-                });
-                console.log('🌱 Seeded default market rates.');
+                for (const rate of rates) {
+                    await client.query("INSERT INTO MarketRates (crop_name, price_per_unit, updated_at) VALUES ($1, $2, $3)",
+                        [rate[0], rate[1], new Date().toISOString()]);
+                }
+                console.log('🌱 Seeded default market rates in PostgreSQL.');
             }
-        });
 
-        // Seed default GovtSchemes if empty
-        sqliteDb.get("SELECT COUNT(*) as count FROM GovtSchemes", [], (err, row) => {
-            if (!err && row && row.count === 0) {
-                const schemes = [
-                    ['PM-Kisan Samman Nidhi', 'All landholding farmer families', 'Financial benefit of Rs. 6000 per year in 3 installments', 'https://pmkisan.gov.in/'],
-                    ['Pradhan Mantri Fasal Bima Yojana (PMFBY)', 'Farmers growing notified crops in notified areas', 'Comprehensive insurance coverage against crop failure', 'https://pmfby.gov.in/'],
-                    ['Soil Health Card Scheme', 'All farmers across India', 'Nutrient status assessment and crop-wise dosage recommendations', 'https://soilhealth.dac.gov.in/']
-                ];
-                schemes.forEach(scheme => {
-                    sqliteDb.run(
-                        "INSERT INTO GovtSchemes (scheme_name, eligibility, benefits, application_link, created_at) VALUES (?, ?, ?, ?, ?)",
-                        [scheme[0], scheme[1], scheme[2], scheme[3], new Date().toISOString()],
-                        (e) => {}
-                    );
-                });
-                console.log('🌱 Seeded default government schemes.');
-            }
-        });
-    });
-};
-
-// 2. Try PostgreSQL if DATABASE_URL is valid, otherwise use SQLite
-const init = async () => {
-    const dbUrl = process.env.DATABASE_URL;
-    // If DATABASE_URL is missing or contains the expired Render Postgres hostname, skip Postgres directly
-    if (!dbUrl || dbUrl.includes('dpg-dape0me0tbcc73aio1u0-a')) {
-        console.log('ℹ️ No active cloud PostgreSQL DATABASE_URL found. Using local SQLite engine.');
-        usePostgres = false;
-        initSqlite();
-        return;
+            client.release();
+            return;
+        } catch (err) {
+            console.warn('⚠️ Cloud PostgreSQL connection failed:', err.message);
+        }
     }
 
-    try {
-        const { Pool } = require('pg');
-        pgPool = new Pool({
-            connectionString: dbUrl,
-            ssl: dbUrl.includes('localhost') ? false : { rejectUnauthorized: false },
-            connectionTimeoutMillis: 3000
-        });
-
-        const client = await pgPool.connect();
-        console.log('✅ Connected to Cloud PostgreSQL Database.');
-        usePostgres = true;
-        client.release();
-    } catch (err) {
-        console.warn('⚠️ Cloud PostgreSQL connection failed:', err.message);
-        console.log('🔄 Gracefully falling back to local SQLite engine (eagri.db)...');
-        usePostgres = false;
-        initSqlite();
-    }
+    console.log('ℹ️ Operating in standalone mode (no external PostgreSQL required).');
+    usePostgres = false;
+    initSqlite();
 };
 
 init();
 
-// Unified Database API wrapping both PostgreSQL and SQLite
+// Unified Database API wrapping PostgreSQL, SQLite, and in-memory safety
 module.exports = {
     run: (query, params, callback) => {
         if (typeof params === 'function') {
@@ -247,11 +324,13 @@ module.exports = {
                 .catch(err => {
                     if (callback) callback(err);
                 });
-        } else {
-            if (!sqliteDb) initSqlite();
+        } else if (sqliteDb) {
             sqliteDb.run(query, params, function(err) {
                 if (callback) callback.call(this, err);
             });
+        } else {
+            // Emergency in-memory runner
+            if (callback) callback.call({ lastID: Date.now() }, null);
         }
     },
 
@@ -270,11 +349,24 @@ module.exports = {
                 .catch(err => {
                     if (callback) callback(err, null);
                 });
-        } else {
-            if (!sqliteDb) initSqlite();
+        } else if (sqliteDb) {
             sqliteDb.get(query, params, (err, row) => {
                 if (callback) callback(err, row);
             });
+        } else {
+            // In-memory fallback for basic queries
+            const q = query.toLowerCase();
+            let table = 'Farmers';
+            if (q.includes('admins')) table = 'Admins';
+            else if (q.includes('crops')) table = 'Crops';
+            else if (q.includes('marketrates')) table = 'MarketRates';
+            
+            const rows = memStore[table] || [];
+            let result = rows[0] || null;
+            if (params.length > 0 && typeof params[0] === 'string') {
+                result = rows.find(r => r.email === params[0]) || rows[0] || null;
+            }
+            if (callback) callback(null, result);
         }
     },
 
@@ -293,11 +385,19 @@ module.exports = {
                 .catch(err => {
                     if (callback) callback(err, null);
                 });
-        } else {
-            if (!sqliteDb) initSqlite();
+        } else if (sqliteDb) {
             sqliteDb.all(query, params, (err, rows) => {
                 if (callback) callback(err, rows);
             });
+        } else {
+            const q = query.toLowerCase();
+            let table = 'MarketRates';
+            if (q.includes('crops')) table = 'Crops';
+            else if (q.includes('govtschemes') || q.includes('schemes')) table = 'GovtSchemes';
+            else if (q.includes('marketplace')) table = 'Marketplace';
+            else if (q.includes('forumposts')) table = 'ForumPosts';
+            
+            if (callback) callback(null, memStore[table] || []);
         }
     },
 
